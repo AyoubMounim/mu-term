@@ -24,6 +24,8 @@ M.open_term = function()
 		relative = "win",
 		width = M.config.width,
 		height = M.config.height,
+		row = 0,
+		col = 0,
 		style = "minimal",
 	}
 	local win = vim.api.nvim_open_win(buf, true, win_opts)
