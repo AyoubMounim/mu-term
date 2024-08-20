@@ -8,11 +8,7 @@ local show_info = function(msg)
 	require("notify")(msg, "info")
 end
 
-local default_config = { width = 50, height = 50 }
-
-M.setup = function(config)
-	local user_config = config or {}
-end
+M.setup = function(config) end
 
 M.open_term = function()
 	local buf = vim.api.nvim_create_buf(true, true)
