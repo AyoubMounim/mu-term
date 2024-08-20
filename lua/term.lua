@@ -25,7 +25,7 @@ M.open_term = function()
 		width = M.config.width,
 		height = M.config.height,
 		row = 0,
-		col = 0,
+		col = 50,
 		style = "minimal",
 	}
 	local win = vim.api.nvim_open_win(buf, true, win_opts)
