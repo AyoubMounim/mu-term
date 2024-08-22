@@ -1,99 +1,248 @@
 local M = {}
 
-local show_error = function(msg)
-	require("notify")(msg, "error")
-end
+local Executable = {}
 
-local show_info = function(msg)
-	require("notify")(msg, "info")
-end
-
-M.setup = function(config) end
-
-M.open_term = function()
-	local buf = vim.api.nvim_create_buf(true, true)
-	if buf == 0 then
-		show_error("Buffer creation failed.")
-		return
-	end
-	local win_opts = {
-		style = "minimal",
-		vertical = true,
-		split = "right",
+function Executable:new(exe_path, args_str, cwd, env)
+	local obj = {
+		exe = exe_path or "",
+		args = args_str or "",
+		cwd = cwd or vim.fs.dirname(exe_path),
+		env = env or {},
 	}
-	local win = vim.api.nvim_open_win(buf, true, win_opts)
-	if win == 0 then
-		show_error("Window creation failed.")
-		return
-	end
-	vim.api.nvim_cmd({ cmd = "terminal" }, {})
+	setmetatable(obj, self)
+	self.__index = self
+	return obj
 end
 
-M.open_term_float = function(x, y, width, height)
-	local buf = vim.api.nvim_create_buf(true, true)
-	if buf == 0 then
-		show_error("Buffer creation failed.")
-		return
+function Executable:new_from_file(file)
+	if not file then
+		M:show_warn("File arg is nil.")
+		return nil
 	end
-	local current_win_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
-	local current_win_height = vim.api.nvim_win_get_height(vim.api.nvim_get_current_win())
-	local win_opts = {
-		relative = "win",
-		width = width or math.floor(current_win_width / 2),
-		height = height or current_win_height,
-		row = y or 0,
-		col = x or current_win_width / 2,
-		style = "minimal",
-		border = "rounded",
-	}
-	local win = vim.api.nvim_open_win(buf, true, win_opts)
-	if win == 0 then
-		show_error("Window creation failed.")
-		return
+	local f = io.open(file, "r")
+	if not f then
+		M:show_warn("File open failed.")
+		return nil
 	end
-	vim.api.nvim_cmd({ cmd = "terminal" }, {})
+	local json_str = f:read("*all")
+	f:close()
+	local ok, data = pcall(vim.json.decode, json_str, { luanil = { object = true, array = true } })
+	if not ok then
+		M:show_error("Config file parsing failed.")
+		return nil
+	end
+	local exes = data["executables"] or nil
+	if not exes then
+		M:show_warn("Config parsing error.")
+		return nil
+	end
+	if #exes == 0 then
+		exes = { exes }
+	end
+	local parsed_exes = {}
+	for _, d in ipairs(exes) do
+		local exe_path = nil
+		if d["exe"] then
+			exe_path = vim.fs.joinpath(vim.fs.dirname(file), d["exe"])
+		end
+		if exe_path then
+			table.insert(parsed_exes, Executable:new(exe_path, d["args"], d["cwd"], d["env"]))
+		end
+	end
+	return parsed_exes
 end
 
-M._open_term_chan_float = function(x, y, width, height)
-	local buf = vim.api.nvim_create_buf(true, true)
-	if buf == 0 then
-		return 0
-	end
-	local current_win_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
-	local current_win_height = vim.api.nvim_win_get_height(vim.api.nvim_get_current_win())
-	local win_opts = {
-		relative = "win",
-		width = width or math.floor(current_win_width / 2),
-		height = height or current_win_height,
-		row = y or 0,
-		col = x or current_win_width / 2,
-		style = "minimal",
-		border = "rounded",
-	}
-	local win = vim.api.nvim_open_win(buf, true, win_opts)
-	if win == 0 then
-		return 0
-	end
-	return vim.api.nvim_open_term(buf, {})
-end
-
-M.term_execute = function(path_to_exe, args)
-	local exe = path_to_exe or nil
-	local args_str = args or nil
+function Executable:new_from_input()
 	local cwd = vim.fn.getcwd(0)
+	local exe = vim.fn.input({ prompt = "Executable path: ", default = cwd, cancelreturn = nil })
 	if not exe then
-		exe = vim.fn.input({ prompt = "Executable path: ", default = cwd })
+		return nil
 	end
-	if not args_str then
-		args_str = vim.fn.input({ prompt = "Arguments string: " })
-	end
-	local chan_id = M._open_term_chan_float()
-	if chan_id == 0 then
-		show_error("Terminal opening failed.")
+	local args = vim.fn.input({ prompt = "Executable args string: ", cancelreturn = "" })
+	return Executable:new(exe, args)
+end
+
+function Executable:get_cmd_string()
+	local cmd = vim.split(self.args, " ", { trimempty = true })
+	table.insert(cmd, 1, self.exe)
+	return cmd
+end
+
+M._default_config = {
+	verbose = false,
+	exe_float_win = { x = nil, y = nil, width = 0.8, height = 0.8 },
+	term_float_win = { x = nil, y = nil, width = 0.8, height = 0.8 },
+	term_win = { vertical = true, split = "right" },
+}
+
+function M:show_error(msg)
+	if not self._conf.verbose then
 		return
 	end
-	local obj = vim.system({ exe, args_str }, { text = true }):wait()
-	vim.api.nvim_chan_send(chan_id, obj.stdout)
+	require("notify")(msg, "error", { title = "mu-term" })
+end
+
+function M:show_info(msg)
+	if not self._conf.verbose then
+		return
+	end
+	require("notify")(msg, "info", { title = "mu-term" })
+end
+
+function M:show_warn(msg)
+	if not self._conf.verbose then
+		return
+	end
+	require("notify")(msg, "warn", { title = "mu-term" })
+end
+
+M.setup = function(config)
+	local conf = config or {}
+	M._conf = vim.tbl_deep_extend("force", M._default_config, conf)
+end
+
+function M:open_term()
+	local buf = vim.api.nvim_create_buf(true, true)
+	if buf == 0 then
+		M:show_error("Buffer creation failed.")
+		return
+	end
+	local win_opts = {
+		style = "minimal",
+		vertical = self._conf.term_win.vertical,
+		split = self._conf.term_win.split,
+	}
+	local win = vim.api.nvim_open_win(buf, true, win_opts)
+	if win == 0 then
+		M:show_error("Window creation failed.")
+		return
+	end
+	vim.api.nvim_cmd({ cmd = "terminal" }, {})
+end
+
+function M:open_term_float(x, y, width, height)
+	M._open_win_float(
+		x or self._conf.term_float_win.x,
+		y or self._conf.term_float_win.y,
+		width or self._conf.term_float_win.width,
+		height or self._conf.term_float_win.height
+	)
+	vim.api.nvim_cmd({ cmd = "terminal" }, {})
+end
+
+M._open_win_float = function(x, y, width, height)
+	local res = { buf = 0, win = 0 }
+	local buf = vim.api.nvim_create_buf(true, true)
+	res.buf = buf
+	if buf == 0 then
+		return res
+	end
+	local current_win_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
+	local current_win_height = vim.api.nvim_win_get_height(vim.api.nvim_get_current_win())
+	local w = math.floor(current_win_width / 2)
+	if width then
+		w = math.floor(width * current_win_width)
+	end
+	local h = math.floor(current_win_height / 2)
+	if height then
+		h = math.floor(height * current_win_height)
+	end
+	local row = math.abs((current_win_height - h) / 2)
+	if y then
+		row = y * current_win_height
+	end
+	local col = math.abs((current_win_width - w) / 2)
+	if x then
+		col = x * current_win_width
+	end
+	local win_opts = {
+		relative = "win",
+		width = w,
+		height = h,
+		row = row,
+		col = col,
+		style = "minimal",
+		border = "rounded",
+	}
+	local win = vim.api.nvim_open_win(buf, true, win_opts)
+	res.win = win
+	return res
+end
+
+M._find_config_file = function()
+	local file = vim.fs.find("mu_conf.json", { type = "file" })[1] or nil
+	return file
+end
+
+function M:_execute(executable, buf)
+	local channel_id = vim.api.nvim_open_term(buf, {})
+	vim.system(executable:get_cmd_string(), {
+		cwd = executable.cwd,
+		env = executable.env,
+		text = true,
+		stdout = vim.schedule_wrap(function(err, data)
+			assert(not err, err)
+			if data then
+				vim.api.nvim_chan_send(channel_id, data)
+			end
+		end),
+		stderr = vim.schedule_wrap(function(err, data)
+			assert(not err, err)
+			if data then
+				vim.api.nvim_chan_send(channel_id, data)
+			end
+		end),
+	})
+end
+
+function M:_get_executable()
+	local config_file = self._find_config_file()
+	if not config_file then
+		local executable = Executable:new_from_input()
+		return executable
+	end
+	local executable = Executable:new_from_file(config_file)
+	if not executable then
+		executable = nil
+	elseif #executable == 1 then
+		executable = executable[1]
+	elseif #executable > 1 then
+		local options = { "Select the executable to run:" }
+		for i, e in ipairs(executable) do
+			table.insert(options, tostring(i) .. " " .. e["exe"])
+		end
+		local c = vim.fn.inputlist(options)
+		executable = executable[c]
+	else
+		executable = nil
+	end
+	return executable
+end
+
+function M:term_execute(path_to_exe, args)
+	local exe_path = path_to_exe or nil
+	local args_str = args or nil
+	local executable = nil
+	if exe_path then
+		executable = Executable:new(exe_path, args_str or "")
+	else
+		executable = M:_get_executable()
+	end
+	if not executable then
+		M:show_error("Executable not found.")
+		return
+	end
+	local pane = self._open_win_float(
+		self._conf.exe_float_win.x,
+		self._conf.exe_float_win.y,
+		self._conf.exe_float_win.width,
+		self._conf.exe_float_win.height
+	)
+	if pane.buf == 0 or pane.win == 0 then
+		M:show_error("Window opening failed.")
+		return
+	end
+	M:_execute(executable, pane.buf)
 end
 
 return M
