@@ -2,10 +2,11 @@ local M = {}
 
 local Executable = {}
 
-function Executable:new(exe_path, args_str, cwd, env)
+function Executable:new(exe_path, args_str, alias, cwd, env)
 	local obj = {
-		exe = exe_path or "",
+		name = exe_path or "",
 		args = args_str or "",
+		alias = alias or nil,
 		cwd = cwd or vim.fs.dirname(exe_path),
 		env = env or {},
 	}
@@ -31,7 +32,7 @@ function Executable:new_from_file(file)
 		M:show_error("Config file parsing failed.")
 		return nil
 	end
-	local exes = data["executables"] or nil
+	local exes = data["commands"] or nil
 	if not exes then
 		M:show_warn("Config parsing error.")
 		return nil
@@ -42,11 +43,12 @@ function Executable:new_from_file(file)
 	local parsed_exes = {}
 	for _, d in ipairs(exes) do
 		local exe_path = nil
-		if d["exe"] then
-			exe_path = vim.fs.joinpath(vim.fs.dirname(file), d["exe"])
+		if d["name"] then
+			exe_path = vim.fs.joinpath(vim.fs.dirname(file), d["name"])
 		end
 		if exe_path then
-			table.insert(parsed_exes, Executable:new(exe_path, d["args"], d["cwd"], d["env"]))
+			local cmd_alias = d["alias"] or d["name"]
+			table.insert(parsed_exes, Executable:new(exe_path, d["args"], cmd_alias, d["cwd"], d["env"]))
 		end
 	end
 	return parsed_exes
@@ -64,7 +66,7 @@ end
 
 function Executable:get_cmd_string()
 	local cmd = vim.split(self.args, " ", { trimempty = true })
-	table.insert(cmd, 1, self.exe)
+	table.insert(cmd, 1, self.name)
 	return cmd
 end
 
@@ -170,7 +172,7 @@ M._open_win_float = function(x, y, width, height)
 end
 
 M._find_config_file = function()
-	local file = vim.fs.find("mu_conf.json", { type = "file" })[1] or nil
+	local file = vim.fs.find("muterm.json", { type = "file" })[1] or nil
 	return file
 end
 
@@ -197,6 +199,7 @@ end
 
 function M:_get_executable()
 	local config_file = self._find_config_file()
+	local aborted = false
 	if not config_file then
 		local executable = Executable:new_from_input()
 		return executable
@@ -209,26 +212,35 @@ function M:_get_executable()
 	elseif #executable > 1 then
 		local options = { "Select the executable to run:" }
 		for i, e in ipairs(executable) do
-			table.insert(options, tostring(i) .. " " .. e["exe"])
+			local cmd_name = e["alias"] or e["name"]
+			table.insert(options, tostring(i) .. " " .. cmd_name)
 		end
 		local c = vim.fn.inputlist(options)
-		executable = executable[c]
+		if c <= 0 then
+			aborted = true
+			executable = nil
+		else
+			executable = executable[c]
+		end
 	else
 		executable = nil
 	end
-	return executable
+	return executable, aborted
 end
 
 function M:term_execute(path_to_exe, args)
 	local exe_path = path_to_exe or nil
 	local args_str = args or nil
 	local executable = nil
+	local aborted = false
 	if exe_path then
 		executable = Executable:new(exe_path, args_str or "")
 	else
-		executable = M:_get_executable()
+		executable, aborted = M:_get_executable()
 	end
-	if not executable then
+	if aborted then
+		return
+	elseif not executable or not vim.uv.fs_stat(executable.name) then
 		M:show_error("Executable not found.")
 		return
 	end

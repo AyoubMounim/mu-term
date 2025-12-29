@@ -1,0 +1,12 @@
+
+{
+    "commands": [
+        {
+            "name": "printer.py",
+            "args": "Kenobi Grevious"
+            "alias": "printer",
+            "cwd": "",
+            "env": {"HOME": "."}
+        }
+    ]
+}

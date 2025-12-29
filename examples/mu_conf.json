@@ -1,8 +1,0 @@
-{
-    "executables": [
-        {
-            "exe":  "./printer.py",
-            "args": "Kenobi Grevious"
-        }
-    ]
-}
