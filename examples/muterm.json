@@ -3,7 +3,7 @@
     "commands": [
         {
             "name": "ls",
-            "args": "-a -l"
+            "args": "-a -l",
             "alias": "list all",
             "cwd": "/path/to/wd",
             "env": {"HOME": "/path/to/home"}
