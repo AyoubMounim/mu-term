@@ -2,12 +2,21 @@ local M = {}
 
 local Executable = {}
 
-function Executable:new(exe_path, args_str, alias, cwd, env)
+function Executable:new(name, root_path, args_str, alias, cwd, env)
+	local cmd_path = nil
+	if vim.fn.executable(name) == 1 or vim.uv.fs_stat(name) then
+		cmd_path = name
+	elseif root_path then
+		local path = vim.fs.joinpath(root_path, name)
+		if vim.uv.fs_stat(path) then
+			cmd_path = path
+		end
+	end
 	local obj = {
-		name = exe_path or "",
+		name = cmd_path,
 		args = args_str or "",
 		alias = alias or nil,
-		cwd = cwd or vim.fs.dirname(exe_path),
+		cwd = cwd or vim.fn.getcwd(),
 		env = env or {},
 	}
 	setmetatable(obj, self)
@@ -42,13 +51,11 @@ function Executable:new_from_file(file)
 	end
 	local parsed_exes = {}
 	for _, d in ipairs(exes) do
-		local exe_path = nil
 		if d["name"] then
-			exe_path = vim.fs.joinpath(vim.fs.dirname(file), d["name"])
-		end
-		if exe_path then
-			local cmd_alias = d["alias"] or d["name"]
-			table.insert(parsed_exes, Executable:new(exe_path, d["args"], cmd_alias, d["cwd"], d["env"]))
+			table.insert(
+				parsed_exes,
+				Executable:new(d["name"], vim.fs.dirname(file), d["args"], d["alias"] or d["name"], d["cwd"], d["env"])
+			)
 		end
 	end
 	return parsed_exes
@@ -61,7 +68,7 @@ function Executable:new_from_input()
 		return nil
 	end
 	local args = vim.fn.input({ prompt = "Executable args string: ", cancelreturn = "" })
-	return Executable:new(exe, args)
+	return Executable:new(exe, nil, args)
 end
 
 function Executable:get_cmd_string()
@@ -234,13 +241,13 @@ function M:term_execute(path_to_exe, args)
 	local executable = nil
 	local aborted = false
 	if exe_path then
-		executable = Executable:new(exe_path, args_str or "")
+		executable = Executable:new(exe_path, vim.fn.getcwd(), args_str or "")
 	else
 		executable, aborted = M:_get_executable()
 	end
 	if aborted then
 		return
-	elseif not executable or not vim.uv.fs_stat(executable.name) then
+	elseif not executable or not executable.name then
 		M:show_error("Executable not found.")
 		return
 	end
